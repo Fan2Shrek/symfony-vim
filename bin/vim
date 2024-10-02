@@ -1,0 +1,8 @@
+#!/usr/bin/env php
+<?php
+
+use App\Vim;
+
+require_once dirname(__DIR__) . '/vendor/autoload_runtime.php';
+
+return fn () => new Vim();
