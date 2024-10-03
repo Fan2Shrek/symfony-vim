@@ -64,16 +64,24 @@ class Vim extends Application
     {
         switch ($direction) {
             case 'h':
-                $this->cursor->x--;
+                if (1 < $this->cursor->x) {
+                    $this->cursor->x--;
+                }
                 break;
             case 'j':
-                $this->cursor->y--;
+                if ($this->getHeight() - 1 > $this->cursor->y) {
+                    $this->cursor->y++;
+                }
                 break;
             case 'k':
-                $this->cursor->y++;
+                if (1 < $this->cursor->y) {
+                    $this->cursor->y--;
+                }
                 break;
             case 'l':
-                $this->cursor->x++;
+                if ($this->getWidth() - 1 > $this->cursor->x) {
+                    $this->cursor->x++;
+                }
                 break;
         }
     }
@@ -140,7 +148,8 @@ class Vim extends Application
 
         $this->input = \defined('STDIN') ? \STDIN : @fopen('php://input', 'r+');
         stream_set_blocking($this->input, false);
-        exec('stty -icanon');
+        // exec('stty -icanon');
+        exec('stty cbreak -echo');
 
         if (function_exists('pcntl_signal')) {
             pcntl_signal(SIGINT, function () {
