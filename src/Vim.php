@@ -15,11 +15,10 @@ class Vim extends Application
 
     /** @var ressource $input */
     private $input;
-    /** @var string[] */
-    private array $inputs = [];
+    /** @var int[] $changedLines */
+    private array $changedLines = [];
     private bool $run;
     private Buffer $buffer;
-    private Buffer $currentBuffer;
     private OutputInterface $output;
     private Terminal $terminal;
     private Cursor $cursor;
@@ -44,9 +43,7 @@ class Vim extends Application
 
         while ($this->run) {
             $this->handleInput();
-            if ($this->hasUnhandledInputs()) {
-                $this->renderBuffer();
-            }
+            $this->renderChangedLines();
         }
 
         $this->onTerminate();
@@ -57,7 +54,6 @@ class Vim extends Application
     private function handleInput(): void
     {
         while ($c = @fread($this->input, 1)) {
-            $this->inputs[] = $c;
             switch ($c) {
                 case 'h':
                 case 'j':
@@ -73,17 +69,17 @@ class Vim extends Application
     {
         switch ($direction) {
             case 'h':
-                if (0 < $this->cursor->x) {
+                if (1 < $this->cursor->x) {
                     $this->cursor->x--;
                 }
                 break;
             case 'j':
-                if ($this->getHeight() - 1 > $this->cursor->y) {
+                if ($this->getHeight() - 2 > $this->cursor->y) { // 2 for status bar
                     $this->cursor->y++;
                 }
                 break;
             case 'k':
-                if (0 < $this->cursor->y) {
+                if (1 < $this->cursor->y) {
                     $this->cursor->y--;
                 }
                 break;
@@ -93,30 +89,21 @@ class Vim extends Application
                 }
                 break;
         }
+        $this->output->write(AnsiHelper::cursorTo($this->cursor->x, $this->cursor->y));
+        $this->processStatusBar(false);
     }
 
     private function prepareBuffer(): void
     {
-        // $this->buffer->addContent("\x1b[?25l"); // Hide cursor
         $this->buffer->addContent("\x1b[2J"); // Clear screen
     }
 
     private function renderBuffer(): void
     {
-        $this->buffer->addContent("\x1bc");
-        $this->processContent();
         $this->processStatusBar();
+        $this->buffer->addContent(AnsiHelper::cursorTo($this->cursor->x, $this->cursor->y));
 
-        if ($this->currentBuffer->getContent() === $this->buffer->getContent()) {
-            $this->buffer->clear();
-            return;
-        }
-
-        $this->buffer->addContent(\sprintf("\x1b[%u;%uH", $this->cursor->y, $this->cursor->x));
-        $this->currentBuffer = clone $this->buffer;
         $this->output->write($this->buffer->flush());
-
-        $this->inputs = [];
     }
 
     private function renderDefaultScreen(?string $file): void
@@ -158,19 +145,38 @@ class Vim extends Application
         $this->renderDefaultScreen(null);
     }
 
-    private function processStatusBar(): void
+    private function processStatusBar(bool $withBuffer = true): void
     {
         static $padding;
 
         $text = \sprintf("%u, %u", $this->cursor->y, $this->cursor->x);
-        $padding ??= \str_repeat('', ($this->getWidth() - 1 - \strlen($text)) / 2);
+        $padding ??= \str_repeat(' ', ($this->getWidth() - 1 - \strlen($text)) / 2);
 
-        $this->buffer->addContent(\sprintf("%s%s%s\n", $padding, $text, $padding));
+        if (0) {
+            $this->buffer->addContent(\sprintf("%s%s%s\n", $padding, $text, $padding));
+        } else {
+            $this->changedLines[$this->getHeight() - 1] = \sprintf("%s%s%s\n", $padding, $text, $padding);
+        }
     }
 
-    private function hasUnhandledInputs(): bool
+    private function renderChangedLines(): void
     {
-        return !empty($this->inputs);
+        foreach ($this->changedLines as $lineNumber => $content) {
+            $this->updateLine($lineNumber, $content);
+        }
+
+        if (!empty($this->changedLines)) {
+            $this->renderBuffer();
+        }
+
+        $this->changedLines = [];
+    }
+
+    private function updateLine(int $lineNumber, string $content): void
+    {
+        $this->buffer->addContent(\sprintf("\x1b[%u;0H", $lineNumber));
+        $this->buffer->addContent("\x1b[2K");
+        $this->buffer->addContent($content);
     }
 
     public function onTerminate(): void
@@ -188,12 +194,10 @@ class Vim extends Application
     {
         $this->terminal = new Terminal();
         $this->buffer = new Buffer('');
-        $this->currentBuffer = new Buffer('');
         $this->cursor = new Cursor(1, 1);
 
         $this->input = \defined('STDIN') ? \STDIN : @fopen('php://input', 'r+');
         stream_set_blocking($this->input, false);
-        // exec('stty -icanon');
         exec('stty cbreak -echo');
 
         if (function_exists('pcntl_signal')) {
