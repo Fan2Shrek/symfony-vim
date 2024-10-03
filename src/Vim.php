@@ -15,11 +15,15 @@ class Vim extends Application
 
     /** @var ressource $input */
     private $input;
+    /** @var string[] */
+    private array $inputs = [];
     private bool $run;
     private Buffer $buffer;
+    private Buffer $currentBuffer;
     private OutputInterface $output;
     private Terminal $terminal;
     private Cursor $cursor;
+    private string $content = '';
 
     public function __construct()
     {
@@ -32,13 +36,17 @@ class Vim extends Application
         $this->output = $output;
 
         $this->prepareBuffer();
-        $this->renderFile(null);
+        $this->renderDefaultScreen(null);
 
         $this->run = true;
+        $this->renderBuffer();
+        $this->buffer->addContent("\x1b[1;1H");
 
         while ($this->run) {
             $this->handleInput();
-            $this->renderBuffer();
+            if ($this->hasUnhandledInputs()) {
+                $this->renderBuffer();
+            }
         }
 
         $this->onTerminate();
@@ -49,6 +57,7 @@ class Vim extends Application
     private function handleInput(): void
     {
         while ($c = @fread($this->input, 1)) {
+            $this->inputs[] = $c;
             switch ($c) {
                 case 'h':
                 case 'j':
@@ -64,7 +73,7 @@ class Vim extends Application
     {
         switch ($direction) {
             case 'h':
-                if (1 < $this->cursor->x) {
+                if (0 < $this->cursor->x) {
                     $this->cursor->x--;
                 }
                 break;
@@ -74,7 +83,7 @@ class Vim extends Application
                 }
                 break;
             case 'k':
-                if (1 < $this->cursor->y) {
+                if (0 < $this->cursor->y) {
                     $this->cursor->y--;
                 }
                 break;
@@ -94,24 +103,36 @@ class Vim extends Application
 
     private function renderBuffer(): void
     {
-        $this->buffer->addContent(\sprintf("\x1b[%d;%dH", $this->cursor->y, $this->cursor->x));
+        $this->buffer->addContent("\x1bc");
+        $this->processContent();
+        $this->processStatusBar();
+
+        if ($this->currentBuffer->getContent() === $this->buffer->getContent()) {
+            $this->buffer->clear();
+            return;
+        }
+
+        $this->buffer->addContent(\sprintf("\x1b[%u;%uH", $this->cursor->y, $this->cursor->x));
+        $this->currentBuffer = clone $this->buffer;
         $this->output->write($this->buffer->flush());
+
+        $this->inputs = [];
     }
 
-    private function renderFile(?string $file): void
+    private function renderDefaultScreen(?string $file): void
     {
         if (null !== $file) {
             // @todo
             throw new \RuntimeException('Not implemented yet');
         }
 
-        for ($i = 0; $i < $this->getHeight(); $i++) {
-            if ($this->getHeight() / 2 === $i) {
+        for ($i = 0; $i < $this->getHeight() - 1; $i++) {
+            if (round($this->getHeight() / 3) == $i) {
                 $text = \sprintf("%s -- %s", $this->getName(), $this->getVersion());
                 $padding = \str_repeat(' ', ($this->getWidth() - 2 - \strlen($text)) / 2);
                 $fullLine = \sprintf("~%s%s%s\n", $padding, $text, $padding);
             } else {
-                $fullLine = \sprintf("~%s\n", \str_repeat(' ', $this->getWidth() - 3));
+                $fullLine = \sprintf("~\n");
             }
 
             $this->buffer->addContent($fullLine);
@@ -128,23 +149,47 @@ class Vim extends Application
         return $this->terminal->getWidth();
     }
 
+    private function processContent(): void
+    {
+        if ('' !== $this->content) {
+            return;
+        }
+
+        $this->renderDefaultScreen(null);
+    }
+
+    private function processStatusBar(): void
+    {
+        static $padding;
+
+        $text = \sprintf("%u, %u", $this->cursor->y, $this->cursor->x);
+        $padding ??= \str_repeat('', ($this->getWidth() - 1 - \strlen($text)) / 2);
+
+        $this->buffer->addContent(\sprintf("%s%s%s\n", $padding, $text, $padding));
+    }
+
+    private function hasUnhandledInputs(): bool
+    {
+        return !empty($this->inputs);
+    }
+
     public function onTerminate(): void
     {
         exec('stty sane');
 
         $this->buffer->clear();
         $this->buffer->addContent("\x1b[2J"); // Clear screen
-        $this->buffer->addContent("\x1b[H"); // Move to top
+        $this->buffer->addContent("\x1b[0;0H"); // Move to top
         $this->buffer->addContent("\x1b[?25h"); // Show cursor
         $this->renderBuffer();
     }
 
     public function init()
     {
-
         $this->terminal = new Terminal();
         $this->buffer = new Buffer('');
-        $this->cursor = new Cursor(0, 0);
+        $this->currentBuffer = new Buffer('');
+        $this->cursor = new Cursor(1, 1);
 
         $this->input = \defined('STDIN') ? \STDIN : @fopen('php://input', 'r+');
         stream_set_blocking($this->input, false);
