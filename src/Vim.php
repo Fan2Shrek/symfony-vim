@@ -2,6 +2,7 @@
 
 namespace App;
 
+use App\Enum\ModeEnum;
 use Symfony\Component\Console\Application;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputInterface;
@@ -23,6 +24,7 @@ class Vim extends Application
     private Terminal $terminal;
     private Cursor $cursor;
     private string $content = '';
+    private ModeEnum $mode = ModeEnum::NORMAL;
 
     public function __construct()
     {
@@ -54,6 +56,14 @@ class Vim extends Application
     private function handleInput(): void
     {
         while ($c = @fread($this->input, 1)) {
+            $c = $this->normalize($c);
+
+            if ($this->isInsertMode() && "\x1b" !== $c) {
+                $this->insert($c);
+
+                continue;
+            }
+
             switch ($c) {
                 case 'h':
                 case 'j':
@@ -61,8 +71,51 @@ class Vim extends Application
                 case 'l':
                     $this->move($c);
                     break;
+                case 'i':
+                    $this->changeMode(ModeEnum::INSERT);
+                    break;
+                case "\x1b":
+                    $this->changeMode(ModeEnum::NORMAL);
+                    break;
+                case 'v':
+                    $this->changeMode(ModeEnum::VISUAL);
+                    break;
             };
         }
+    }
+
+    private function normalize(string $c): string
+    {
+        return match ($c) {
+            default => $c,
+        };
+    }
+
+    private function changeMode(ModeEnum $mode): void
+    {
+        $this->mode = $mode;
+        $this->processStatusBar();
+    }
+
+    private function isInsertMode(): bool
+    {
+        return ModeEnum::INSERT === $this->mode;
+    }
+
+    private function insert(string $c): void
+    {
+        if ($c === "\x7f") {
+            $this->content = \substr($this->content, 0, -1);
+            $this->changedLines[$this->cursor->y] = $this->content;
+            $this->cursor->x--;
+
+            return;
+        }
+
+        // Place at the current cursor position
+        $this->content = \substr_replace($this->content, $c, $this->cursor->x, 0);
+        $this->changedLines[$this->cursor->y] = $this->content;
+        $this->cursor->x++;
     }
 
     private function move(string $direction): void
@@ -113,7 +166,7 @@ class Vim extends Application
             throw new \RuntimeException('Not implemented yet');
         }
 
-        for ($i = 0; $i < $this->getHeight() - 1; $i++) {
+        for ($i = 1; $i < $this->getHeight() - 1; $i++) {
             if (round($this->getHeight() / 3) == $i) {
                 $text = \sprintf("%s -- %s", $this->getName(), $this->getVersion());
                 $padding = \str_repeat(' ', ($this->getWidth() - 2 - \strlen($text)) / 2);
@@ -145,18 +198,17 @@ class Vim extends Application
         $this->renderDefaultScreen(null);
     }
 
-    private function processStatusBar(bool $withBuffer = true): void
+    private function processStatusBar(): void
     {
         static $padding;
 
-        $text = \sprintf("%u, %u", $this->cursor->y, $this->cursor->x);
-        $padding ??= \str_repeat(' ', ($this->getWidth() - 1 - \strlen($text)) / 2);
+        $modeText = \sprintf(" -- %s -- ", $this->mode->value);
+        $cursorText = \sprintf("%u, %u", $this->cursor->y, $this->cursor->x);
+        $lenght = \strlen($modeText . $cursorText);
+        $padding ??= ($this->getWidth() - 5 - $lenght);
 
-        if (0) {
-            $this->buffer->addContent(\sprintf("%s%s%s\n", $padding, $text, $padding));
-        } else {
-            $this->changedLines[$this->getHeight() - 1] = \sprintf("%s%s%s\n", $padding, $text, $padding);
-        }
+        $sprintf = "%s%-" . $padding . "s%s\n";
+        $this->changedLines[$this->getHeight() - 1] = \sprintf($sprintf, $modeText, ' ', $cursorText);
     }
 
     private function renderChangedLines(): void
