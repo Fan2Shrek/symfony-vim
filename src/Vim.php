@@ -18,16 +18,20 @@ class Vim extends Application
 
     /** @var ressource $inputRessource */
     private $inputRessource;
-    /** @var int[] $changedLines */
+    /** @var array<int, string> $changedLines */
     private array $changedLines = [];
+    /** @var array<int, string> $content */
+    private array $content = [];
     private bool $run;
     private Buffer $buffer;
     private InputInterface $input;
     private OutputInterface $output;
     private Terminal $terminal;
     private Cursor $cursor;
-    private string $content = '';
     private ModeEnum $mode = ModeEnum::NORMAL;
+    private string $statusBar = '';
+    private bool $displayWelcome = true;
+    private int $height = 1;
 
     public function __construct()
     {
@@ -100,12 +104,12 @@ class Vim extends Application
 
     private function enterCommandMode(): void
     {
-        $this->changeMode(ModeEnum::COMMAND);
-
         $this->output->write(AnsiHelper::hideCursor());
         $this->cursor->y = $this->getHeight() - 1;
         $this->cursor->x = 3;
-        $this->content = ':';
+        $this->statusBar = ':';
+
+        $this->changeMode(ModeEnum::COMMAND);
     }
 
     private function changeMode(ModeEnum $mode): void
@@ -126,24 +130,44 @@ class Vim extends Application
 
     private function insert(string $c): void
     {
-        if ("\x7f" === $c) {
-            $this->content = \substr($this->content, 0, -1);
-            $this->changedLines[$this->cursor->y] = $this->content;
-            $this->cursor->x--;
-
-            return;
-        }
-
-        if ("\n" === $c) {
-            if ($this->isCommandMode()) {
-                $this->execute(\str_replace(':', '', $this->content));
+        if ($this->isCommandMode()) {
+            if ("\n" === $c) {
+                $this->execute(\str_replace(':', '', $this->statusBar));
+            } elseif ("\x7f" === $c) {
+                $this->changedLines[$this->cursor->y] = $this->statusBar = \substr($this->statusBar, 0, -1);
+            } else {
+                $this->changedLines[$this->cursor->y] = $this->statusBar .= $c;
             }
 
             return;
         }
 
-        $this->content = \substr_replace($this->content, $c, $this->cursor->x, 0);
-        $this->changedLines[$this->cursor->y] = $this->content;
+        if ($this->displayWelcome) {
+            $this->changedLines[round($this->getHeight() / 3) + 1] = '~';
+            $this->displayWelcome = false;
+        }
+
+        if ("\n" === $c) {
+            $content = \substr_replace($this->content[$this->cursor->y] ?? '', "\n", $this->cursor->x, 0);
+            [$before, $after] = \explode("\n", $content);
+            $this->changedLines[$this->cursor->y] = $this->content[$this->cursor->y] = $before;
+            $this->changedLines[$this->cursor->y + 1] = $this->content[$this->cursor->y + 1] = $after;
+
+            $this->cursor->x = 1;
+            $this->height++;
+            $this->cursor->y++;
+
+            return;
+        }
+
+        if ("\x7f" === $c) {
+            $this->changedLines[$this->cursor->y] = $this->content[$this->cursor->y] = \substr($this->content[$this->cursor->y] ?? '', 0, -1);
+            $this->cursor->x--;
+
+            return;
+        }
+
+        $this->changedLines[$this->cursor->y] = $this->content[$this->cursor->y] = \substr_replace($this->content[$this->cursor->y] ?? '', $c, $this->cursor->x, 0);
         $this->cursor->x++;
     }
 
@@ -156,7 +180,7 @@ class Vim extends Application
                 }
                 break;
             case 'j':
-                if ($this->getHeight() - 2 > $this->cursor->y) { // 2 for status bar
+                if ($this->height > $this->cursor->y) {
                     $this->cursor->y++;
                 }
                 break;
@@ -172,7 +196,7 @@ class Vim extends Application
                 break;
         }
         $this->output->write(AnsiHelper::cursorTo($this->cursor->x, $this->cursor->y));
-        $this->processStatusBar(false);
+        $this->processStatusBar();
     }
 
     private function prepareBuffer(): void
@@ -196,7 +220,7 @@ class Vim extends Application
         }
 
         for ($i = 1; $i < $this->getHeight() - 1; $i++) {
-            if (round($this->getHeight() / 3) == $i) {
+            if ($this->displayWelcome && round($this->getHeight() / 3) == $i) {
                 $text = \sprintf("%s -- %s", $this->getName(), $this->getVersion());
                 $padding = \str_repeat(' ', ($this->getWidth() - 2 - \strlen($text)) / 2);
                 $fullLine = \sprintf("~%s%s%s\n", $padding, $text, $padding);
@@ -206,16 +230,30 @@ class Vim extends Application
 
             $this->buffer->addContent($fullLine);
         }
+
+        $this->content[1] = '';
     }
 
     private function execute(string $command): void
     {
         $command = $this->getCommand($command);
-        $command->run($this->input, $this->output);
+
+        $this->cursor->y = 1;
+        $this->output->write(AnsiHelper::showCursor());
+        $this->output->write(AnsiHelper::cursorTo(1, 1));
+
+        try {
+            $command->run($this->input, $this->output);
+        } catch (\Exception $e) {
+            $this->statusBar = AnsiHelper::errorMessage($e->getMessage());
+            $this->changedLines[$this->getHeight() - 1] = $this->statusBar;
+
+            return;
+        }
 
         if ($command instanceof VimCommandInterface) {
             $this->changedLines[$this->getHeight() - 1] = $command->getResult();
-            $this->content = '';
+            $this->statusBar = '';
         }
     }
 
@@ -248,7 +286,7 @@ class Vim extends Application
         static $padding;
 
         if (ModeEnum::COMMAND === $this->mode) {
-            $this->changedLines[$this->getHeight() - 1] = ':';
+            $this->changedLines[$this->getHeight() - 1] = $this->statusBar;
 
             return;
         }
@@ -306,7 +344,7 @@ class Vim extends Application
         }
 
         if (!$this->has($name)) {
-            $this->content = \sprintf("%s is not a vim command", $name);
+            $this->statusBar = \sprintf("%s is not a vim command", $name);
         }
 
         $commandNames = \str_split($name);
@@ -346,7 +384,7 @@ class Vim extends Application
 
     public function getContent(): string
     {
-        return $this->content;
+        return \implode("\n", $this->content);
     }
 
     public function quit(): void

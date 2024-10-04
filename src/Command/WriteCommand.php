@@ -17,9 +17,7 @@ class WriteCommand extends AbstractVimCommand implements VimCommandInterface
             touch($file);
         }
 
-        $app = $this->getApplication();
-
-        @\file_put_contents($file, $this->getApplication()->getContent());
+        @\file_put_contents($file, $this->getApplication()->getContent() . "\n");
 
         return Command::SUCCESS;
     }
