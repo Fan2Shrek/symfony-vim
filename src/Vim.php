@@ -2,6 +2,7 @@
 
 namespace App;
 
+use App\Command\VimCommandInterface;
 use App\Enum\ModeEnum;
 use Symfony\Component\Console\Application;
 use Symfony\Component\Console\Command\Command;
@@ -14,12 +15,13 @@ class Vim extends Application
     private const NAME = 'Symfony/Vim';
     private const VERSION = '0-DEV';
 
-    /** @var ressource $input */
-    private $input;
+    /** @var ressource $inputRessource */
+    private $inputRessource;
     /** @var int[] $changedLines */
     private array $changedLines = [];
     private bool $run;
     private Buffer $buffer;
+    private InputInterface $input;
     private OutputInterface $output;
     private Terminal $terminal;
     private Cursor $cursor;
@@ -34,6 +36,7 @@ class Vim extends Application
     public function doRun(InputInterface $input, OutputInterface $output): int
     {
         $this->init();
+        $this->input = $input;
         $this->output = $output;
 
         $this->prepareBuffer();
@@ -55,10 +58,10 @@ class Vim extends Application
 
     private function handleInput(): void
     {
-        while ($c = @fread($this->input, 1)) {
+        while ($c = @fread($this->inputRessource, 1)) {
             $c = $this->normalize($c);
 
-            if ($this->isInsertMode() && "\x1b" !== $c) {
+            if (($this->isCommandMode() || $this->isInsertMode()) && "\x1b" !== $c) {
                 $this->insert($c);
 
                 continue;
@@ -80,6 +83,9 @@ class Vim extends Application
                 case 'v':
                     $this->changeMode(ModeEnum::VISUAL);
                     break;
+                case ":":
+                    $this->enterCommandMode();
+                    break;
             };
         }
     }
@@ -89,6 +95,16 @@ class Vim extends Application
         return match ($c) {
             default => $c,
         };
+    }
+
+    private function enterCommandMode(): void
+    {
+        $this->changeMode(ModeEnum::COMMAND);
+
+        $this->output->write(AnsiHelper::hideCursor());
+        $this->cursor->y = $this->getHeight() - 1;
+        $this->cursor->x = 3;
+        $this->content = ':';
     }
 
     private function changeMode(ModeEnum $mode): void
@@ -102,9 +118,14 @@ class Vim extends Application
         return ModeEnum::INSERT === $this->mode;
     }
 
+    private function isCommandMode(): bool
+    {
+        return ModeEnum::COMMAND === $this->mode;
+    }
+
     private function insert(string $c): void
     {
-        if ($c === "\x7f") {
+        if ("\x7f" === $c) {
             $this->content = \substr($this->content, 0, -1);
             $this->changedLines[$this->cursor->y] = $this->content;
             $this->cursor->x--;
@@ -112,7 +133,14 @@ class Vim extends Application
             return;
         }
 
-        // Place at the current cursor position
+        if ("\n" === $c) {
+            if ($this->isCommandMode()) {
+                $this->execute(\str_replace(':', '', $this->content));
+            }
+
+            return;
+        }
+
         $this->content = \substr_replace($this->content, $c, $this->cursor->x, 0);
         $this->changedLines[$this->cursor->y] = $this->content;
         $this->cursor->x++;
@@ -179,6 +207,21 @@ class Vim extends Application
         }
     }
 
+    private function execute(string $command): void
+    {
+        $command = $this->getCommand($command);
+        $command->run($this->input, $this->output);
+
+        if ($command instanceof VimCommandInterface) {
+            $this->changedLines[$this->getHeight() - 1] = $command->getResult();
+        }
+    }
+
+    public function getCommand(string $command): Command
+    {
+        return $this->get($command);
+    }
+
     private function getHeight(): int
     {
         return $this->terminal->getHeight();
@@ -201,6 +244,12 @@ class Vim extends Application
     private function processStatusBar(): void
     {
         static $padding;
+
+        if (ModeEnum::COMMAND === $this->mode) {
+            $this->changedLines[$this->getHeight() - 1] = ':';
+
+            return;
+        }
 
         $modeText = \sprintf(" -- %s -- ", $this->mode->value);
         $cursorText = \sprintf("%u, %u", $this->cursor->y, $this->cursor->x);
@@ -242,14 +291,15 @@ class Vim extends Application
         $this->renderBuffer();
     }
 
-    public function init()
+    public function init(): void
     {
+        $this->setCommandLoader(new VimCommandLoader());
         $this->terminal = new Terminal();
         $this->buffer = new Buffer('');
         $this->cursor = new Cursor(1, 1);
 
-        $this->input = \defined('STDIN') ? \STDIN : @fopen('php://input', 'r+');
-        stream_set_blocking($this->input, false);
+        $this->inputRessource = \defined('STDIN') ? \STDIN : @fopen('php://input', 'r+');
+        stream_set_blocking($this->inputRessource, false);
         exec('stty cbreak -echo');
 
         if (function_exists('pcntl_signal')) {

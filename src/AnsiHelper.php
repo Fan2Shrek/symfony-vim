@@ -8,4 +8,9 @@ abstract class AnsiHelper
     {
         return "\x1b[{$y};{$x}H";
     }
+
+    public static function hideCursor(): string
+    {
+        return "\x1b[?25l";
+    }
 }
