@@ -214,6 +214,7 @@ class Vim extends Application
 
         if ($command instanceof VimCommandInterface) {
             $this->changedLines[$this->getHeight() - 1] = $command->getResult();
+            $this->content = '';
         }
     }
 
@@ -284,11 +285,9 @@ class Vim extends Application
     {
         exec('stty sane');
 
-        $this->buffer->clear();
-        $this->buffer->addContent("\x1b[2J"); // Clear screen
-        $this->buffer->addContent("\x1b[0;0H"); // Move to top
-        $this->buffer->addContent("\x1b[?25h"); // Show cursor
-        $this->renderBuffer();
+        $this->output->write(AnsiHelper::clearScreen()); // Clear screen
+        $this->output->write(AnsiHelper::cursorTo(1, 1)); // Move to top
+        $this->output->write("\x1bc"); // Move to top
     }
 
     public function init(): void
@@ -303,10 +302,12 @@ class Vim extends Application
         exec('stty cbreak -echo');
 
         if (function_exists('pcntl_signal')) {
-            pcntl_signal(SIGINT, function () {
-                $this->run = false;
-            });
-            // \pcntl_signal(SIGINT, fn() => '');
+            pcntl_signal(SIGINT, $this->quit(...));
         }
+    }
+
+    public function quit(): void
+    {
+        $this->run = false;
     }
 }

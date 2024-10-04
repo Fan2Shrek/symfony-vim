@@ -12,6 +12,8 @@ class VimCommandLoader implements CommandLoaderInterface
     private array $commands = [
         'w' => VimCommand\WriteCommand::class,
         'write' => VimCommand\WriteCommand::class,
+        'q' => VimCommand\QuitCommand::class,
+        'quit' => VimCommand\QuitCommand::class,
     ];
 
     public function get(string $name): Command

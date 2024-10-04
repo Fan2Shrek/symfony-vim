@@ -13,4 +13,9 @@ abstract class AnsiHelper
     {
         return "\x1b[?25l";
     }
+
+    public static function clearScreen(): string
+    {
+        return "\x1b[2J";
+    }
 }
