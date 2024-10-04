@@ -9,6 +9,7 @@ use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Output\OutputInterface;
 use Symfony\Component\Console\Terminal;
+use App\Command\MultipleCommand;
 
 class Vim extends Application
 {
@@ -254,8 +255,8 @@ class Vim extends Application
 
         $modeText = \sprintf(" -- %s -- ", $this->mode->value);
         $cursorText = \sprintf("%u, %u", $this->cursor->y, $this->cursor->x);
-        $lenght = \strlen($modeText . $cursorText);
-        $padding ??= ($this->getWidth() - 5 - $lenght);
+        $length = \strlen($modeText . $cursorText);
+        $padding ??= ($this->getWidth() - 5 - $length);
 
         $sprintf = "%s%-" . $padding . "s%s\n";
         $this->changedLines[$this->getHeight() - 1] = \sprintf($sprintf, $modeText, ' ', $cursorText);
@@ -281,6 +282,43 @@ class Vim extends Application
         $this->buffer->addContent($content);
     }
 
+    public function has(string $name): bool
+    {
+        if (parent::has($name)) {
+            return true;
+        }
+
+        $commands = \str_split($name);
+
+        foreach ($commands as $command) {
+            if (!parent::has($command)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    public function get(string $name): Command
+    {
+        if (parent::has($name)) {
+            return parent::get($name);
+        }
+
+        if (!$this->has($name)) {
+            $this->content = \sprintf("%s is not a vim command", $name);
+        }
+
+        $commandNames = \str_split($name);
+        $commands = [];
+
+        foreach ($commandNames as $command) {
+            $commands[] = parent::get($command);
+        }
+
+        return new MultipleCommand(...$commands);
+    }
+
     public function onTerminate(): void
     {
         exec('stty sane');
@@ -304,6 +342,11 @@ class Vim extends Application
         if (function_exists('pcntl_signal')) {
             pcntl_signal(SIGINT, $this->quit(...));
         }
+    }
+
+    public function getContent(): string
+    {
+        return $this->content;
     }
 
     public function quit(): void
