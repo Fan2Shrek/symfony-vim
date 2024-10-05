@@ -7,8 +7,6 @@ use Symfony\Component\Console\Command\Command;
 
 abstract class AbstractVimCommand extends Command
 {
-
-
     public function getApplication(): ?Vim
     {
         $app = parent::getApplication();

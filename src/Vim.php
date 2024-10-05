@@ -10,6 +10,9 @@ use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Output\OutputInterface;
 use Symfony\Component\Console\Terminal;
 use App\Command\MultipleCommand;
+use Symfony\Component\Console\Input\InputDefinition;
+use Symfony\Component\Console\Input\StringInput;
+use Symfony\Component\Console\Input\InputArgument;
 
 class Vim extends Application
 {
@@ -236,15 +239,22 @@ class Vim extends Application
 
     private function execute(string $command): void
     {
-        $command = $this->getCommand($command);
+        if (\str_contains($command, ' ')) {
+            [$commandName, $arguments] = \explode(' ', $command, 2);
+        } else {
+            $commandName = $command;
+        }
+
+        $command = $this->getCommand($commandName);
+        $input = isset($arguments) ? new StringInput($arguments ?? '') : $this->input;
 
         $this->cursor->y = 1;
         $this->output->write(AnsiHelper::showCursor());
         $this->output->write(AnsiHelper::cursorTo(1, 1));
 
         try {
-            $command->run($this->input, $this->output);
-        } catch (\Exception $e) {
+            $command->run($input, $this->output);
+        } catch (\Throwable $e) {
             $this->statusBar = AnsiHelper::errorMessage($e->getMessage());
             $this->changedLines[$this->getHeight() - 1] = $this->statusBar;
 
@@ -272,13 +282,11 @@ class Vim extends Application
         return $this->terminal->getWidth();
     }
 
-    private function processContent(): void
+    protected function getDefaultInputDefinition(): InputDefinition
     {
-        if ('' !== $this->content) {
-            return;
-        }
-
-        $this->renderDefaultScreen(null);
+        return new InputDefinition([
+            new InputArgument('file', InputArgument::OPTIONAL),
+        ]);
     }
 
     private function processStatusBar(): void
@@ -385,6 +393,11 @@ class Vim extends Application
     public function getContent(): string
     {
         return \implode("\n", $this->content);
+    }
+
+    public function getInput(): InputInterface
+    {
+        return $this->input;
     }
 
     public function quit(): void

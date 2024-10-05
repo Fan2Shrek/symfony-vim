@@ -6,12 +6,15 @@ use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Output\OutputInterface;
 use App\Vim;
+use Symfony\Component\Console\Input\InputArgument;
 
 class WriteCommand extends AbstractVimCommand implements VimCommandInterface
 {
     public function execute(InputInterface $input, OutputInterface $output): int
     {
-        $file = $input->getArgument('command');
+        if ($input->hasArgument('file')) {
+            $file = $input->getArgument('file');
+        }
 
         if (!\is_file($file)) {
             touch($file);
