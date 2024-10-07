@@ -2,5 +2,5 @@
 
 usage
 ```
-bin/viù
+bin/vim
 ```
